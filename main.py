@@ -4,6 +4,8 @@ from discord.ext import commands
 from dotenv import load_dotenv
 from collections import deque
 import google.generativeai as genai
+import asyncio
+import time
 
 from keep_alive import keep_alive
 
@@ -27,9 +29,13 @@ TSUNDERE_PERSONALITY = (
     "Avoid being overly scripted or repetitive."
 )
 
-# Memory: last 5 messages per guild for context
+# Keep last 5 messages per guild for context
 guild_histories = {}
 MAX_HISTORY = 5
+
+# Simple cooldown per user (in seconds) to avoid spam
+user_cooldowns = {}
+COOLDOWN_SECONDS = 10
 
 keep_alive()  # start Flask webserver for uptime monitoring
 
@@ -49,16 +55,23 @@ async def on_message(message):
 
     content_lower = message.content.lower()
 
+    # Check if Val is mentioned or "val" in message
     if bot.user.mentioned_in(message) or "val" in content_lower:
-        guild_id = message.guild.id if message.guild else f"dm_{message.author.id}"
+        now = time.time()
+        user_id = message.author.id
+        last_called = user_cooldowns.get(user_id, 0)
+        if now - last_called < COOLDOWN_SECONDS:
+            # Ignore messages if user is on cooldown
+            return
+        user_cooldowns[user_id] = now
+
+        guild_id = message.guild.id if message.guild else f"dm_{user_id}"
 
         if guild_id not in guild_histories:
             guild_histories[guild_id] = deque(maxlen=MAX_HISTORY)
 
-        # Add user message to history
         guild_histories[guild_id].append({"author": "user", "content": message.content})
 
-        # Build prompt for Gemini API
         messages = [{"author": "system", "content": TSUNDERE_PERSONALITY}]
         messages.extend(guild_histories[guild_id])
         messages.append({"author": "user", "content": message.content})
@@ -74,10 +87,9 @@ async def on_message(message):
             if not reply:
                 reply = "Hmph... What do you want now?"
         except Exception as e:
-            print(f"Gemini API error: {e}")
+            print(f"[ERROR] Gemini API failed: {e}")
             reply = "Hmph... I'm not answering that right now."
 
-        # Add Val's reply to history
         guild_histories[guild_id].append({"author": "assistant", "content": reply})
 
         await message.channel.send(reply)
