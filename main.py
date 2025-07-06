@@ -10,41 +10,40 @@ import traceback
 
 from keep_alive import keep_alive
 
-# Load .env values
+# Load .env
 load_dotenv()
 TOKEN = os.getenv('TOKEN')
 GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')
 
 if not TOKEN or not GOOGLE_API_KEY:
-    print("[ERROR] Missing TOKEN or GOOGLE_API_KEY in environment.")
+    print("[ERROR] Missing TOKEN or GOOGLE_API_KEY.")
     exit(1)
 
-# Configure Gemini API
+# Configure Gemini
 genai.configure(api_key=GOOGLE_API_KEY)
 
-# Discord intents
+# Discord bot setup
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
-
 bot = commands.Bot(command_prefix='!', intents=intents)
 
-# Personality for Gemini
+# Val's tsundere personality
 TSUNDERE_PERSONALITY = (
-    "You are Val, a tsundere AI girl who chats naturally and casually. "
-    "You're playful, a little flustered, but kind. Keep replies short and realistic. "
-    "Avoid sounding like a script or overly dramatic anime."
+    "You are Val, a tsundere AI girl who chats like a real person. "
+    "You're playful, flustered, but caring deep down. Keep replies short and casual. "
+    "Avoid sounding robotic or overly dramatic."
 )
 
-# History: per-server message context
+# Per-server memory
 guild_histories = {}
 MAX_HISTORY = 5
 
-# Cooldown: per-user to prevent spam
+# Cooldown
 user_cooldowns = {}
 COOLDOWN_SECONDS = 10
 
-# Keep alive web server
+# Flask server to stay alive
 keep_alive()
 
 @bot.event
@@ -62,6 +61,7 @@ async def on_message(message):
         return
 
     content_lower = message.content.lower()
+
     if bot.user.mentioned_in(message) or "val" in content_lower:
         now = time.time()
         user_id = message.author.id
@@ -73,28 +73,29 @@ async def on_message(message):
         if guild_id not in guild_histories:
             guild_histories[guild_id] = deque(maxlen=MAX_HISTORY)
 
-        # Add the user's message to history
+        # Store message
         guild_histories[guild_id].append({"author": "user", "content": message.content})
 
-        # Format for Gemini
-        messages = [{"author": "system", "content": TSUNDERE_PERSONALITY}]
-        messages.extend(guild_histories[guild_id])
+        # Format history correctly for Gemini
+        messages = [{"role": "user", "parts": [TSUNDERE_PERSONALITY]}]
+
+        for entry in guild_histories[guild_id]:
+            role = "user" if entry["author"] == "user" else "model"
+            messages.append({"role": role, "parts": [entry["content"]]})
 
         try:
             model = genai.GenerativeModel(model_name="gemini-2.0-flash")
-            chat = model.start_chat(history=messages)
-            response = chat.send_message(message.content)
+            response = model.generate_content(messages)
             reply = response.text.strip()
 
             if not reply:
                 reply = "Hmph... What do you want now?"
-
         except Exception as e:
-            print("[❌ ERROR] Gemini API failed:")
+            print("[❌ Gemini API ERROR]")
             traceback.print_exc()
             reply = "Hmph... I'm not answering that right now."
 
-        # Add Val's reply to history
+        # Save Val's reply
         guild_histories[guild_id].append({"author": "assistant", "content": reply})
 
         await message.channel.send(reply)
